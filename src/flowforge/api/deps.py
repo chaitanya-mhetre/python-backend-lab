@@ -18,6 +18,7 @@ from flowforge.config import Settings
 from flowforge.context import Actor, ActorType, actor_var
 from flowforge.db.models import User
 from flowforge.domain.errors import AuthenticationError
+from flowforge.jobs.queue import JobQueue
 from flowforge.repositories.users import UserRepository
 from flowforge.security.tokens import decode_access_token
 from flowforge.services.access import AccessResolver, OrgAccess
@@ -37,7 +38,13 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def get_queue(request: Request) -> JobQueue:
+    queue: JobQueue = request.app.state.queue
+    return queue
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
+QueueDep = Annotated[JobQueue, Depends(get_queue)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 

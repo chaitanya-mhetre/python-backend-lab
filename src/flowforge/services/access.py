@@ -19,7 +19,14 @@ from typing import Concatenate
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flowforge.db.models import Project, Role, TaskRow, User
+from flowforge.db.models import (
+    Project,
+    Role,
+    TaskRow,
+    User,
+    WorkflowDefinitionRow,
+    WorkflowExecutionRow,
+)
 from flowforge.domain.errors import NotFoundError, PermissionDeniedError
 from flowforge.repositories.orgs import OrgRepository
 from flowforge.security.permissions import Action, can
@@ -83,3 +90,21 @@ class AccessResolver:
             return await self.for_project(user, task.project_id)
         except NotFoundError:
             raise NotFoundError("task", task_id) from None
+
+    async def for_workflow(self, user: User, definition_id: uuid.UUID) -> OrgAccess:
+        row = await self._session.get(WorkflowDefinitionRow, definition_id)
+        if row is None:
+            raise NotFoundError("workflow", definition_id)
+        try:
+            return await self.for_org(user, row.org_id)
+        except NotFoundError:
+            raise NotFoundError("workflow", definition_id) from None
+
+    async def for_execution(self, user: User, execution_id: uuid.UUID) -> OrgAccess:
+        row = await self._session.get(WorkflowExecutionRow, execution_id)
+        if row is None:
+            raise NotFoundError("execution", execution_id)
+        try:
+            return await self.for_org(user, row.org_id)
+        except NotFoundError:
+            raise NotFoundError("execution", execution_id) from None

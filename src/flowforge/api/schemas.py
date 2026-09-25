@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from flowforge.db.models import Role
 from flowforge.domain.task import TaskStatus
+from flowforge.domain.workflow import ExecutionStatus, StepType, TriggerType
 
 
 class Schema(BaseModel):
@@ -124,6 +125,64 @@ class AuditLogOut(Schema):
     after: dict[str, Any] | None
     request_id: str | None
     created_at: datetime
+
+
+class StepIn(Schema):
+    type: StepType
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowIn(Schema):
+    name: str = Field(min_length=1, max_length=200)
+    trigger_type: TriggerType
+    trigger_filter: dict[str, Any] = Field(default_factory=dict)
+    steps: list[StepIn] = Field(min_length=1, max_length=20)
+
+
+class StepOut(Schema):
+    position: int
+    step_type: StepType
+    config: dict[str, Any]
+
+
+class WorkflowOut(Schema):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    name: str
+    trigger_type: TriggerType
+    trigger_filter: dict[str, Any]
+    enabled: bool
+    version: int
+    steps: list[StepOut]
+    created_at: datetime
+
+
+class StepRunOut(Schema):
+    position: int
+    step_type: StepType
+    attempt: int
+    status: ExecutionStatus
+    output: dict[str, Any] | None
+    error: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class ExecutionOut(Schema):
+    id: uuid.UUID
+    definition_id: uuid.UUID
+    definition_version: int
+    trigger_event: dict[str, Any]
+    status: ExecutionStatus
+    error: str | None
+    error_code: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class ExecutionDetailOut(ExecutionOut):
+    step_runs: list[StepRunOut]
 
 
 class PageOut[T](BaseModel):

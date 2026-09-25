@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Query, Response, status
 
-from flowforge.api.deps import CurrentUser, SessionDep
+from flowforge.api.deps import CurrentUser, QueueDep, SessionDep
 from flowforge.api.schemas import PageOut, TaskIn, TaskOut, TaskPatch
 from flowforge.domain.errors import DomainError
 from flowforge.domain.task import TaskStatus
@@ -35,11 +35,11 @@ def parse_if_match(value: str | None) -> int | None:
     "/projects/{project_id}/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED
 )
 async def create_task(
-    project_id: uuid.UUID, body: TaskIn, user: CurrentUser, session: SessionDep
+    project_id: uuid.UUID, body: TaskIn, user: CurrentUser, session: SessionDep, queue: QueueDep
 ) -> object:
     access = await AccessResolver(session).for_project(user, project_id)
     data = TaskCreate(**body.model_dump())
-    return await TaskService(session).create(access, project_id, data)
+    return await TaskService(session, queue).create(access, project_id, data)
 
 
 @router.get("/projects/{project_id}/tasks", response_model=PageOut[TaskOut])
@@ -81,13 +81,15 @@ async def update_task(
     body: TaskPatch,
     user: CurrentUser,
     session: SessionDep,
+    queue: QueueDep,
     response: Response,
     if_match: Annotated[str | None, Header()] = None,
 ) -> object:
     # exclude_unset: only fields the client actually sent are changed (true PATCH semantics).
     changes = TaskChanges(body.model_dump(exclude_unset=True))
     access = await AccessResolver(session).for_task(user, task_id)
-    task = await TaskService(session).update(access, task_id, changes, parse_if_match(if_match))
+    service = TaskService(session, queue)
+    task = await service.update(access, task_id, changes, parse_if_match(if_match))
     response.headers["ETag"] = f'"{task.version}"'
     return task
 
