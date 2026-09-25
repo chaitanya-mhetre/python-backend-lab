@@ -56,3 +56,15 @@ class StepFailedError(DomainError):
         super().__init__(f"step {position} failed: {reason}")
         self.position = position
         self.reason = reason
+
+
+class AuthenticationError(DomainError):
+    code = "authentication_failed"
+
+
+class PermissionDeniedError(DomainError):
+    code = "permission_denied"
+
+
+class ConflictError(DomainError):
+    code = "conflict"
