@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import timedelta
 from typing import Any
@@ -11,7 +12,7 @@ from sqlalchemy import select
 
 from flowforge.db.models import DeliveryStatus, Webhook, WebhookDelivery
 from flowforge.jobs.queue import RecordingJobQueue
-from flowforge.security.webhooks import verify
+from flowforge.security.webhooks import PinnedTransport, verify
 from flowforge.worker.runner import WorkerDeps
 from tests.integration.conftest import FROZEN_NOW, Headers, MakeUser, drain, post_json
 
@@ -202,3 +203,56 @@ async def test_oversized_body_rejected(client: AsyncClient) -> None:
     )
     assert r.status_code == 413
     assert r.json()["error"]["code"] == "payload_too_large"
+
+
+async def test_delivery_connects_to_the_ip_it_vetted(
+    client: AsyncClient, make_user: MakeUser, queue: RecordingJobQueue, worker_deps: WorkerDeps
+) -> None:
+    """Issue #3: the send-time check and the connection use one DNS answer, not two."""
+    headers, org_id, project_id = await workspace(client, make_user)
+    await create_hook(client, headers, org_id)  # saved while DNS still looked public
+
+    lookups: list[str] = []
+
+    async def rebinding_resolver(host: str) -> list[str]:
+        lookups.append(host)
+        return ["93.184.216.34"] if len(lookups) == 1 else ["10.0.0.5"]
+
+    seen: dict[str, Any] = {}
+
+    def client_factory(transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
+        assert isinstance(transport, PinnedTransport)
+        seen["pins"] = transport.pins
+        return httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(204)))
+
+    deps = dataclasses.replace(worker_deps, resolver=rebinding_resolver, http_client=client_factory)
+    await post_json(client, f"{API}/projects/{project_id}/tasks", headers, {"title": "t"})
+    await drain(deps, queue)
+
+    # One lookup at send time, and the connection is pinned to exactly that answer. The
+    # attacker's second answer (10.0.0.5) is never requested, let alone connected to.
+    assert lookups == ["hooks.example.com"]
+    assert seen["pins"] == {"hooks.example.com": "93.184.216.34"}
+    [delivery] = await deliveries(deps)
+    assert delivery.status is DeliveryStatus.SUCCEEDED
+
+
+async def test_rebinding_at_send_time_is_blocked(
+    client: AsyncClient, make_user: MakeUser, queue: RecordingJobQueue, worker_deps: WorkerDeps
+) -> None:
+    """Public when the webhook was saved, private by the time we deliver: refused, no request."""
+    headers, org_id, project_id = await workspace(client, make_user)
+    await create_hook(client, headers, org_id)
+
+    async def now_private(host: str) -> list[str]:
+        return ["10.0.0.5"]
+
+    def must_not_connect(transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
+        raise AssertionError("no HTTP client should be created for a private target")
+
+    deps = dataclasses.replace(worker_deps, resolver=now_private, http_client=must_not_connect)
+    await post_json(client, f"{API}/projects/{project_id}/tasks", headers, {"title": "t"})
+    await drain(deps, queue, run_deferred=False)
+    [delivery] = await deliveries(deps)
+    assert delivery.status is DeliveryStatus.PENDING and delivery.attempt == 1
+    assert "non-public" in (delivery.last_error or "")
