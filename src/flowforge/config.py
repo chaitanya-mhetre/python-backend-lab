@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     jwt_ttl_minutes: int = Field(default=15, ge=1, le=60 * 24)
     jwt_algorithm: str = "HS256"
     sql_echo: bool = False
+    # Token bucket: burst of `capacity` requests, refilled at `refill_per_sec`.
+    rate_limit_capacity: int = Field(default=60, ge=1)
+    rate_limit_refill_per_sec: float = Field(default=1.0, gt=0)
+    cache_ttl_seconds: int = Field(default=60, ge=1)
 
 
 @lru_cache
