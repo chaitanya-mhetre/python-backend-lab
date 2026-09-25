@@ -3,7 +3,7 @@
 | Area | What we do | Known limits |
 |---|---|---|
 | Passwords | argon2id (`argon2-cffi` defaults); login does a dummy verify for unknown emails so timing doesn't reveal accounts | no lockout/2FA (rate limiting only) |
-| Tokens | HS256 JWT, 15 min, algorithm pinned on decode, `exp`/`sub` required, `typ=access` | no refresh tokens or revocation list: see `production-fastapi` |
+| Tokens | HS256 JWT access tokens, 15 min, algorithm pinned on decode, `exp`/`sub` required, `typ=access`. Opaque refresh tokens (256-bit, stored as SHA-256, 14 days) rotate on every use; replaying a spent token revokes the whole login family; logout revokes the family | access tokens can't be revoked early (they expire in ≤ 15 min); concurrent refreshes from one client count as reuse (no grace window) |
 | API keys | 256-bit random secret, stored as SHA-256, prefix lookup, constant-time compare, scopes ⊆ creator's permissions, revocable, `last_used_at` | no expiry dates yet |
 | Authorization | service-layer `@requires` + role table; non-members get 404 | row-level security not used (single DB role) |
 | Input | Pydantic with `extra="forbid"`; body limit 1 MB; parameterised SQL only (ORM) | |

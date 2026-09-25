@@ -2,6 +2,11 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com). Milestone tags: `m1` … `m7`.
 
+## [Unreleased]
+### Added
+- Refresh tokens: `POST /auth/refresh` (rotation) and `POST /auth/logout`. Login now also returns
+  `refresh_token` and `expires_in`. Reusing a spent refresh token revokes its whole family (#1).
+
 ## [1.0.0] - 2026-09-25 (m7)
 ### Added
 - Structured JSON logging (structlog) with request id and actor on every line.

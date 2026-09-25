@@ -21,7 +21,13 @@ Everything is under `/api/v1`. Errors always look like:
 ```bash
 # register + login
 curl -X POST :8000/api/v1/auth/register -d '{"email":"a@x.io","password":"long-password-1","full_name":"A"}' -H 'content-type: application/json'
-TOKEN=$(curl -s -X POST :8000/api/v1/auth/login -d '{"email":"a@x.io","password":"long-password-1"}' -H 'content-type: application/json' | jq -r .access_token)
+LOGIN=$(curl -s -X POST :8000/api/v1/auth/login -d '{"email":"a@x.io","password":"long-password-1"}' -H 'content-type: application/json')
+TOKEN=$(echo "$LOGIN" | jq -r .access_token); REFRESH=$(echo "$LOGIN" | jq -r .refresh_token)
+
+# when the access token expires: rotate (the old refresh token stops working)
+curl -X POST :8000/api/v1/auth/refresh -d "{\"refresh_token\":\"$REFRESH\"}" -H 'content-type: application/json'
+# log out everywhere this login reached
+curl -X POST :8000/api/v1/auth/logout -d "{\"refresh_token\":\"$REFRESH\"}" -H 'content-type: application/json'
 
 # org → project → task
 ORG=$(curl -s -X POST :8000/api/v1/orgs -H "Authorization: Bearer $TOKEN" -d '{"name":"Acme"}' -H 'content-type: application/json' | jq -r .id)

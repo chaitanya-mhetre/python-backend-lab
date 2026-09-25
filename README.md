@@ -94,7 +94,7 @@ and runs as a non-root user. Cloud deployment is done in a separate project (`cl
 
 ## Security
 Summary in [docs/security.md](docs/security.md), including known limits (e.g. DNS rebinding for
-webhooks, no refresh tokens).
+webhooks).
 
 ## Performance
 Measured, not estimated. Task list (first + second page, 50 rows) on 100,000 tasks, local Docker Postgres:
@@ -118,13 +118,13 @@ Cache hit ratio and worker throughput: **not measured yet**.
 
 ## Limitations
 - `schedule.cron` trigger is modelled but not executed yet.
-- No refresh tokens, 2FA or account lockout.
+- No 2FA or account lockout.
 - Webhook SSRF guard doesn't pin the resolved IP (DNS rebinding window).
 - Worker-created tasks don't invalidate the stats cache (TTL, 60 s by default).
 - Single-region, single-database design.
 
 ## Roadmap
-- cron triggers via a scheduler job · webhook IP pinning · refresh tokens (in `production-fastapi`)
+- cron triggers via a scheduler job · webhook IP pinning 
 · outbox pattern · OpenTelemetry traces
 
 ## Contributing

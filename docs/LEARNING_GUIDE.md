@@ -361,3 +361,35 @@ commits → duplicate task on retry.)
 - Make worker-created tasks invalidate the stats cache (give `WorkerDeps` the cache).
 - Replace enqueue-after-commit with an outbox table + relay job; prove no event loss with a test
   that crashes between commit and enqueue.
+
+---
+
+## 10. After v1: improvements (one issue each)
+
+### 10.1 Refresh tokens with rotation and reuse detection (#1)
+Read in this order: `security/tokens.py` (`new_refresh_token`) → `db/models.py` (`RefreshToken`)
+→ `services/auth.py` (`refresh`, `logout`) → `tests/integration/test_refresh_tokens.py`.
+
+- **Two token types, two jobs.** The access token is a stateless JWT: fast to check, but it can't
+  be revoked, so it lives only 15 minutes. The refresh token is an opaque random string checked
+  against the database, so it *can* be revoked, and lives 14 days.
+- **Stored as a hash.** Like API keys, only `sha256(token)` is stored. SHA-256 (not argon2) is fine
+  because the token has 256 bits of randomness; slow hashing only matters for guessable inputs.
+- **Rotation.** Every refresh marks the presented row `used_at` and issues a child row with the same
+  `family_id`. A token works exactly once.
+- **Reuse detection.** If a spent token shows up again, someone has a copy. We can't tell whether
+  the attacker or the real user is presenting it, so we revoke the whole family: both must log in
+  again. The revocation is committed *before* raising, otherwise the rollback would undo it.
+- **Race safety.** `SELECT ... FOR UPDATE` locks the row, so two simultaneous refreshes with the
+  same token serialise: one wins, the other sees `used_at` and is treated as reuse
+  (`test_concurrent_refresh_with_same_token_cannot_fork_the_family`).
+
+Interview questions:
+- *Why not just make the JWT last 14 days?* A stolen JWT would be valid for 14 days with no way
+  to revoke it. Short access tokens + revocable refresh tokens bound the damage.
+- *What does reuse detection protect against, and what doesn't it?* It catches a stolen refresh
+  token being used after the real client refreshed (or vice versa). It can't stop an attacker who
+  steals a token and uses it before the real client ever does, until the real client refreshes.
+- *Two browser tabs refresh at the same moment and the user gets logged out. Why, and what would
+  you change?* Both presented the same token; the second counts as reuse. Fix: a short grace
+  window where the parent may be reused once and returns the already-issued child.
