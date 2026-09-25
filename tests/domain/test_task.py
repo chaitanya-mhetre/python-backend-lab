@@ -24,7 +24,8 @@ def make_task(**overrides: object) -> Task:
 
 def test_status_values_are_lowercase_strings() -> None:
     # They will be stored in Postgres and sent in JSON, so the value must be a plain string.
-    assert TaskStatus.IN_PROGRESS == "in_progress"
+    assert isinstance(TaskStatus.IN_PROGRESS, str)
+    assert str(TaskStatus.IN_PROGRESS) == "in_progress"
     assert [s.value for s in TaskStatus] == ["todo", "in_progress", "done", "cancelled"]
 
 
