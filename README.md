@@ -38,7 +38,8 @@ decisions: [docs/adr/](docs/adr/)
 - **RBAC:** owner/admin/member/viewer as a permission table, enforced in services with `@requires`
 - **Tasks:** state machine (todo → in_progress → done/cancelled), keyset pagination, filters,
   sorting, optimistic locking with `If-Match`/`ETag`
-- **Workflows:** triggers `task.created` / `task.status_changed` with filters; steps
+- **Workflows:** triggers `task.created` / `task.status_changed` with filters, and
+  `schedule.cron` (UTC, fired exactly once per scheduled time across all workers); steps
   `create_task`, `update_field`, `send_notification`, `call_webhook`, `delay`
 - **Worker:** one transaction per step, retries with exponential backoff + jitter, step timeouts,
   cancellation, per-org concurrency limit, loop protection (depth ≤ 5), version pinning
@@ -117,14 +118,14 @@ Cache hit ratio and worker throughput: **not measured yet**.
 - **Invalidate, don't update** the cache: no stale writes from races; the TTL covers worker writes.
 
 ## Limitations
-- `schedule.cron` trigger is modelled but not executed yet.
+- Cron schedules are UTC only (no per-workflow time zone); missed runs older than 5 min are skipped, not replayed.
 - No 2FA or account lockout.
 - Webhook SSRF guard doesn't pin the resolved IP (DNS rebinding window).
 - Worker-created tasks don't invalidate the stats cache (TTL, 60 s by default).
 - Single-region, single-database design.
 
 ## Roadmap
-- cron triggers via a scheduler job · webhook IP pinning 
+- webhook IP pinning 
 · outbox pattern · OpenTelemetry traces
 
 ## Contributing

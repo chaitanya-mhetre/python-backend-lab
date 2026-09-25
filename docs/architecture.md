@@ -43,6 +43,17 @@ run_execution:  loop { lock execution row → next step without success → SAVE
                        → INSERT step_run → commit → enqueue emitted events }  (retry w/ backoff on failure)
 deliver_webhook: lock delivery → SSRF re-check → sign → POST → success | schedule retry (1m…12h) | fail
 ```
+
+## Cron schedules
+```
+arq cron (every worker, second 0 of each minute) → schedule_tick
+schedule_tick: for each enabled schedule.cron workflow → latest fire time ≤ now (skip if older than
+               the lookback or before the workflow existed) → INSERT execution … ON CONFLICT
+               (definition_id, scheduled_for) DO NOTHING RETURNING id → commit → enqueue run_execution
+```
+Several workers tick at once; the partial unique index `uq_workflow_executions_schedule` makes
+the database pick exactly one winner per scheduled time, so no leader election or Redis lock is needed.
+
 Loop protection: events carry `depth`; executions triggered at depth > 5 fail with
 `workflow_loop_detected`. Webhook subscribers only receive depth-0 events.
 

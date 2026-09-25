@@ -6,6 +6,9 @@ Format: [Keep a Changelog](https://keepachangelog.com). Milestone tags: `m1` …
 ### Added
 - Refresh tokens: `POST /auth/refresh` (rotation) and `POST /auth/logout`. Login now also returns
   `refresh_token` and `expires_in`. Reusing a spent refresh token revokes its whole family (#1).
+- `schedule.cron` workflows now run: an arq cron job ticks every minute on every worker and a
+  unique index on `(definition_id, scheduled_for)` guarantees one execution per scheduled time.
+  Cron expressions are validated when saved (#2).
 
 ## [1.0.0] - 2026-09-25 (m7)
 ### Added

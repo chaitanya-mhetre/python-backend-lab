@@ -61,6 +61,19 @@ Step configs are validated when saved. `{title}`-style placeholders are filled f
 payload. Inspect runs with `GET /workflows/{id}/executions` and `GET /executions/{id}` (includes
 every step attempt); stop one with `POST /executions/{id}:cancel`.
 
+### Scheduled workflows
+```json
+{
+  "name": "Weekly planning task",
+  "trigger_type": "schedule.cron",
+  "trigger_filter": {"cron": "0 9 * * 1"},
+  "steps": [{"type": "create_task", "config": {"title": "Plan the week", "project_id": "…"}}]
+}
+```
+Standard 5-field cron, evaluated in UTC. There is no triggering task, so `create_task` needs a
+`project_id`, notifications need an explicit user id, and `update_field` isn't allowed (422
+`invalid_schedule` otherwise). Each run's `trigger_event.payload.scheduled_for` says which slot it was.
+
 ## API keys
 `POST /orgs/{org}/api-keys {"name": "ci", "scopes": ["task:read", "task:create"]}` returns the key
 **once**. Use it as `Authorization: Bearer ff_live_…`. Keys only see their own org and only the

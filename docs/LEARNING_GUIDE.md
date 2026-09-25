@@ -355,8 +355,7 @@ commits → duplicate task on retry.)
 ---
 
 ## 9. Exercises to prove you understand it
-- Implement the `schedule.cron` trigger: an arq cron job every minute that evaluates definitions
-  whose `trigger_filter.cron` matches (use `croniter`), with a dedupe key per minute.
+- Add a per-workflow time zone to cron schedules (`trigger_filter.tz`), including DST tests.
 - Add `expires_at` to API keys (model, migration, auth check, test).
 - Make worker-created tasks invalidate the stats cache (give `WorkerDeps` the cache).
 - Replace enqueue-after-commit with an outbox table + relay job; prove no event loss with a test
@@ -393,3 +392,31 @@ Interview questions:
 - *Two browser tabs refresh at the same moment and the user gets logged out. Why, and what would
   you change?* Both presented the same token; the second counts as reuse. Fix: a short grace
   window where the parent may be reused once and returns the already-issued child.
+
+### 10.2 Cron schedules that fire exactly once (#2)
+Read in this order: `domain/schedule.py` → `worker/scheduler.py` → the index
+`uq_workflow_executions_schedule` in `db/models.py` → `tests/integration/test_scheduler.py`.
+
+- **Pure time logic.** `due_fire_time` answers one question: what is the latest scheduled time at
+  or before *now*, and should it still fire? It's pure, so every edge case (outage, workflow created
+  mid-minute, daily job checked too late) is a fast unit test in `tests/domain/test_schedule.py`.
+- **Misfire policy.** After an outage we fire the latest slot once, and skip anything older than the
+  lookback (5 min). Replaying 60 missed "every minute" runs is almost never what users want.
+- **The database is the lock.** Every worker runs the tick. Each computes the same `scheduled_for`
+  and does `INSERT … ON CONFLICT DO NOTHING RETURNING id` against a *partial unique index*. Exactly
+  one insert returns a row; only that worker enqueues the run. No leader election, no Redis lock
+  with a TTL that might expire mid-work, and it survives crashes and restarts.
+- **Enqueue after commit** (same trade-off as `dispatch_event`): a crash between commit and enqueue
+  leaves a pending execution that `scripts/requeue_pending.py` recovers, never a duplicate.
+- **Validate at save time.** A cron run has no triggering task, so steps that need one are rejected
+  with 422 when the workflow is saved, not discovered at 3 a.m. when it fails.
+
+Interview questions:
+- *You run 3 workers and each has a scheduler. How do you stop a job running 3 times?* Make the
+  run's identity deterministic (`workflow id + scheduled time`) and let a unique constraint pick
+  one winner. Alternatives: leader election, or a Redis `SET NX` lock (weaker: TTL expiry, failover).
+- *Why a partial index (`WHERE scheduled_for IS NOT NULL`)?* Event-triggered executions have no
+  scheduled time; the index should only constrain scheduled ones, and it stays smaller.
+- *The scheduler was down for two hours. What happens?* Nothing replays; the next tick fires the
+  latest due slot if it's within the lookback. Explain why that's the right default and when you'd
+  choose "catch up everything" instead (e.g. billing runs).
