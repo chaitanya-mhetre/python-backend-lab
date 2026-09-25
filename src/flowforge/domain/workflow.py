@@ -116,3 +116,22 @@ class Execution:
         self.error = error
         self.error_code = code
         self.finished_at = datetime.now(UTC)
+
+
+def event_to_dict(event: Event) -> dict[str, Any]:
+    """JSON-safe form, used for job payloads and ``workflow_executions.trigger_event``."""
+    return {
+        "type": event.type.value,
+        "org_id": str(event.org_id),
+        "payload": dict(event.payload),
+        "depth": event.depth,
+    }
+
+
+def event_from_dict(data: Mapping[str, Any]) -> Event:
+    return Event(
+        type=TriggerType(data["type"]),
+        org_id=UUID(str(data["org_id"])),
+        payload=dict(data.get("payload", {})),
+        depth=int(data.get("depth", 0)),
+    )

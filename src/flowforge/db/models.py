@@ -17,14 +17,16 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from flowforge.db.base import Base, CreatedAt, UUIDPk
 from flowforge.domain.task import TaskStatus
+from flowforge.domain.workflow import ExecutionStatus, StepType, TriggerType
 
 
 class Role(StrEnum):
@@ -124,3 +126,107 @@ class AuditLog(Base):
     after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     request_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkflowDefinitionRow(UUIDPk, CreatedAt, Base):
+    __tablename__ = "workflow_definitions"
+    __table_args__ = (Index("ix_workflow_definitions_org_trigger", "org_id", "trigger_type"),)
+
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    trigger_type: Mapped[TriggerType] = mapped_column(pg_enum(TriggerType, "trigger_type"))
+    trigger_filter: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    version: Mapped[int] = mapped_column(default=1)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    steps: Mapped[list[WorkflowStepRow]] = relationship(
+        order_by="WorkflowStepRow.position",
+        cascade="all, delete-orphan",
+        lazy="selectin",  # steps are always needed with the definition: avoid N+1
+    )
+
+
+class WorkflowStepRow(UUIDPk, Base):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (UniqueConstraint("definition_id", "position"),)
+
+    definition_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_definitions.id", ondelete="CASCADE")
+    )
+    position: Mapped[int]
+    step_type: Mapped[StepType] = mapped_column(pg_enum(StepType, "step_type"))
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+class WorkflowExecutionRow(UUIDPk, Base):
+    __tablename__ = "workflow_executions"
+    __table_args__ = (
+        Index("ix_workflow_executions_definition_status", "definition_id", "status"),
+        Index(
+            "ix_workflow_executions_active",
+            "status",
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
+
+    definition_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_definitions.id", ondelete="CASCADE")
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    # Pinned: editing a workflow never changes executions already in flight.
+    definition_version: Mapped[int]
+    steps_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    trigger_event: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[ExecutionStatus] = mapped_column(
+        pg_enum(ExecutionStatus, "execution_status"), default=ExecutionStatus.PENDING
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class StepRunRow(UUIDPk, Base):
+    __tablename__ = "step_runs"
+    __table_args__ = (
+        UniqueConstraint("execution_id", "position", "attempt"),
+        # At most one *successful* run per step: the database enforces step idempotency.
+        Index(
+            "uq_step_runs_one_success",
+            "execution_id",
+            "position",
+            unique=True,
+            postgresql_where=text("status = 'succeeded'"),
+        ),
+    )
+
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_executions.id", ondelete="CASCADE")
+    )
+    position: Mapped[int]
+    step_type: Mapped[StepType] = mapped_column(pg_enum(StepType, "step_type"))
+    attempt: Mapped[int]
+    status: Mapped[ExecutionStatus] = mapped_column(pg_enum(ExecutionStatus, "execution_status"))
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Notification(UUIDPk, CreatedAt, Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index(
+            "ix_notifications_unread",
+            "user_id",
+            "created_at",
+            postgresql_where=text("read_at IS NULL"),
+        ),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(50))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
