@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from flowforge.db.models import TaskRow
 from flowforge.domain.errors import ConflictError, NotFoundError
 from flowforge.domain.task import Task, TaskStatus
+from flowforge.domain.workflow import Event, TriggerType, event_to_dict
+from flowforge.jobs.queue import JobQueue
 from flowforge.repositories.audit import AuditRepository
 from flowforge.repositories.orgs import OrgRepository
 from flowforge.repositories.pagination import Page
@@ -54,8 +56,9 @@ def to_domain(row: TaskRow) -> Task:
 
 
 class TaskService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, queue: JobQueue | None = None) -> None:
         self._session = session
+        self._queue = queue
         self._tasks = TaskRepository(session)
         self._projects = ProjectService(session)
         self._audit = AuditRepository(session)
@@ -110,7 +113,29 @@ class TaskService:
             after=snapshot(row),
         )
         await self._session.commit()
+        await self._publish(
+            access.org_id,
+            TriggerType.TASK_CREATED,
+            {
+                "task_id": str(row.id),
+                "project_id": str(row.project_id),
+                "title": row.title,
+                "status": row.status.value,
+            },
+        )
         return row
+
+    async def _publish(
+        self, org_id: uuid.UUID, type_: TriggerType, payload: dict[str, Any]
+    ) -> None:
+        """Enqueue a domain event for the workflow worker, *after* the commit.
+
+        Enqueue-after-commit means a crash right here loses the event (the task change itself
+        is safe). Accepted trade-off for this lab; see docs/adr/0004-enqueue-after-commit.md.
+        """
+        if self._queue is not None:
+            event = Event(type=type_, org_id=org_id, payload=payload)
+            await self._queue.enqueue("dispatch_event", event_to_dict(event))
 
     @requires(Action.TASK_READ)
     async def get(self, access: OrgAccess, task_id: uuid.UUID) -> TaskRow:
@@ -139,6 +164,7 @@ class TaskService:
     ) -> TaskRow:
         row = await self._load(access, task_id)
         before = snapshot(row)
+        before_status = row.status
         task = to_domain(row)
         if expected_version is not None and expected_version != row.version:
             raise VersionConflictError(
@@ -169,6 +195,18 @@ class TaskService:
             after=snapshot(updated),
         )
         await self._session.commit()
+        if updated.status != before_status:
+            await self._publish(
+                access.org_id,
+                TriggerType.TASK_STATUS_CHANGED,
+                {
+                    "task_id": str(task_id),
+                    "project_id": str(updated.project_id),
+                    "title": updated.title,
+                    "from": before_status.value,
+                    "to": updated.status.value,
+                },
+            )
         return updated
 
     @requires(Action.TASK_DELETE)
