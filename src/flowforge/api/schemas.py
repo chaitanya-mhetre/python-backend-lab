@@ -31,7 +31,13 @@ class LoginIn(Schema):
 
 class TokenOut(Schema):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    expires_in: int  # seconds until the access token expires
+
+
+class RefreshIn(Schema):
+    refresh_token: str = Field(min_length=20, max_length=200)
 
 
 class UserOut(Schema):
