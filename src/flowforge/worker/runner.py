@@ -74,6 +74,12 @@ def backoff_delay(attempt: int, *, base: float, cap: float = 600.0, jitter: bool
     return random.uniform(0, delay) if jitter else delay
 
 
+def default_http_client(transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
+    # trust_env=False: an HTTPS_PROXY variable would otherwise route requests around the
+    # pinned transport (httpx mounts env proxies ahead of the default transport).
+    return httpx.AsyncClient(timeout=10.0, transport=transport, trust_env=False)
+
+
 @dataclass
 class WorkerDeps:
     sessionmaker: async_sessionmaker[AsyncSession]
@@ -91,7 +97,10 @@ class WorkerDeps:
     secret_box: SecretBox | None = None
     resolver: Resolver = system_resolver
     allow_private_targets: bool = False
-    http_client: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=10.0)
+    # Given the pinned transport for the vetted IP (or None in allow-private dev mode).
+    http_client: Callable[[httpx.AsyncBaseTransport | None], httpx.AsyncClient] = (
+        default_http_client
+    )
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     _org_limits: defaultdict[uuid.UUID, asyncio.Semaphore] = field(init=False)
 

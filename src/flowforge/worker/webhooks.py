@@ -16,7 +16,7 @@ import httpx
 from flowforge.db.models import DeliveryStatus, Webhook, WebhookDelivery
 from flowforge.db.session import session_scope
 from flowforge.observability.metrics import WEBHOOK_DELIVERIES
-from flowforge.security.webhooks import UnsafeWebhookURLError, check_url, sign
+from flowforge.security.webhooks import UnsafeWebhookURLError, check_url, pinned_transport, sign
 from flowforge.worker.runner import WorkerDeps
 
 RETRY_SCHEDULE: tuple[timedelta, ...] = (
@@ -62,11 +62,12 @@ async def deliver_webhook(ctx: dict[str, Any], delivery_id: str) -> str:
         }
         error: str | None = None
         try:
-            # Re-check at send time: the hostname may resolve differently than at creation.
-            await check_url(
+            # Re-check at send time (the hostname may resolve differently than at creation),
+            # then connect to exactly the IP we just vetted: no second DNS lookup to rebind.
+            ips = await check_url(
                 webhook.url, resolver=deps.resolver, allow_private=deps.allow_private_targets
             )
-            async with deps.http_client() as client:
+            async with deps.http_client(pinned_transport(webhook.url, ips)) as client:
                 response = await client.post(webhook.url, content=body, headers=headers)
             delivery.status_code = response.status_code
             if not response.is_success:
