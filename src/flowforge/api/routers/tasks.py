@@ -11,6 +11,7 @@ from flowforge.api.schemas import PageOut, TaskIn, TaskOut, TaskPatch
 from flowforge.domain.errors import DomainError
 from flowforge.domain.task import TaskStatus
 from flowforge.repositories.tasks import TaskFilter
+from flowforge.services.access import AccessResolver
 from flowforge.services.tasks import TaskChanges, TaskCreate, TaskService
 
 router = APIRouter(tags=["tasks"])
@@ -36,8 +37,9 @@ def parse_if_match(value: str | None) -> int | None:
 async def create_task(
     project_id: uuid.UUID, body: TaskIn, user: CurrentUser, session: SessionDep
 ) -> object:
+    access = await AccessResolver(session).for_project(user, project_id)
     data = TaskCreate(**body.model_dump())
-    return await TaskService(session).create(user, project_id, data)
+    return await TaskService(session).create(access, project_id, data)
 
 
 @router.get("/projects/{project_id}/tasks", response_model=PageOut[TaskOut])
@@ -56,7 +58,8 @@ async def list_tasks(
     flt = TaskFilter(
         project_id=project_id, status=task_status, assignee_id=assignee_id, due_before=due_before
     )
-    page = await TaskService(session).list(user, flt, sort=sort, limit=limit, cursor=cursor)
+    access = await AccessResolver(session).for_project(user, project_id)
+    page = await TaskService(session).list(access, flt, sort=sort, limit=limit, cursor=cursor)
     return PageOut[TaskOut](
         items=[TaskOut.model_validate(t) for t in page.items], next_cursor=page.next_cursor
     )
@@ -66,7 +69,8 @@ async def list_tasks(
 async def get_task(
     task_id: uuid.UUID, user: CurrentUser, session: SessionDep, response: Response
 ) -> object:
-    task = await TaskService(session).get(user, task_id)
+    access = await AccessResolver(session).for_task(user, task_id)
+    task = await TaskService(session).get(access, task_id)
     response.headers["ETag"] = f'"{task.version}"'
     return task
 
@@ -82,11 +86,13 @@ async def update_task(
 ) -> object:
     # exclude_unset: only fields the client actually sent are changed (true PATCH semantics).
     changes = TaskChanges(body.model_dump(exclude_unset=True))
-    task = await TaskService(session).update(user, task_id, changes, parse_if_match(if_match))
+    access = await AccessResolver(session).for_task(user, task_id)
+    task = await TaskService(session).update(access, task_id, changes, parse_if_match(if_match))
     response.headers["ETag"] = f'"{task.version}"'
     return task
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(task_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> None:
-    await TaskService(session).delete(user, task_id)
+    access = await AccessResolver(session).for_task(user, task_id)
+    await TaskService(session).delete(access, task_id)

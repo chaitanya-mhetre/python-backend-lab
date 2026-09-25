@@ -4,33 +4,40 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flowforge.db.models import Project, User
+from flowforge.db.models import Project
 from flowforge.domain.errors import NotFoundError
+from flowforge.repositories.audit import AuditRepository
 from flowforge.repositories.projects import ProjectRepository
-from flowforge.services.access import membership_role
+from flowforge.security.permissions import Action
+from flowforge.services.access import OrgAccess, requires
 
 
 class ProjectService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._projects = ProjectRepository(session)
+        self._audit = AuditRepository(session)
 
-    async def create(self, user: User, org_id: uuid.UUID, name: str) -> Project:
-        await membership_role(self._session, org_id, user.id)
-        project = await self._projects.add(Project(org_id=org_id, name=name.strip()))
+    @requires(Action.PROJECT_CREATE)
+    async def create(self, access: OrgAccess, name: str) -> Project:
+        project = await self._projects.add(Project(org_id=access.org_id, name=name.strip()))
+        self._audit.record(
+            org_id=access.org_id,
+            action="project.created",
+            entity_type="project",
+            entity_id=project.id,
+            after={"name": project.name},
+        )
         await self._session.commit()
         return project
 
-    async def list(self, user: User, org_id: uuid.UUID) -> list[Project]:
-        await membership_role(self._session, org_id, user.id)
-        return await self._projects.list_active(org_id)
+    @requires(Action.PROJECT_READ)
+    async def list(self, access: OrgAccess) -> list[Project]:
+        return await self._projects.list_active(access.org_id)
 
-    async def get(self, user: User, project_id: uuid.UUID) -> Project:
+    @requires(Action.PROJECT_READ)
+    async def get(self, access: OrgAccess, project_id: uuid.UUID) -> Project:
         project = await self._projects.get(project_id)
-        if project is None:
+        if project is None or project.org_id != access.org_id:
             raise NotFoundError("project", project_id)
-        try:
-            await membership_role(self._session, project.org_id, user.id)
-        except NotFoundError:
-            raise NotFoundError("project", project_id) from None
         return project

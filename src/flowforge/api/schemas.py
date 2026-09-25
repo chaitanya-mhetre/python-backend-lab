@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -94,6 +95,35 @@ class TaskOut(Schema):
     created_at: datetime
     updated_at: datetime
     version: int
+
+
+class MemberIn(Schema):
+    email: EmailStr
+    role: Role = Role.MEMBER
+
+
+class MemberRoleIn(Schema):
+    role: Role
+
+
+class MemberOut(Schema):
+    user_id: uuid.UUID
+    email: str
+    full_name: str
+    role: Role
+
+
+class AuditLogOut(Schema):
+    id: int
+    actor_type: str
+    actor_id: uuid.UUID | None
+    action: str
+    entity_type: str
+    entity_id: str
+    before: dict[str, Any] | None
+    after: dict[str, Any] | None
+    request_id: str | None
+    created_at: datetime
 
 
 class PageOut[T](BaseModel):

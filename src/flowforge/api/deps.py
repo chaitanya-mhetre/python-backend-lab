@@ -6,6 +6,7 @@ Tests swap any node with ``app.dependency_overrides``.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -19,6 +20,7 @@ from flowforge.db.models import User
 from flowforge.domain.errors import AuthenticationError
 from flowforge.repositories.users import UserRepository
 from flowforge.security.tokens import decode_access_token
+from flowforge.services.access import AccessResolver, OrgAccess
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -55,3 +57,11 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_org_access(org_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> OrgAccess:
+    """For routes under ``/orgs/{org_id}/...``: resolves the caller's role in that org."""
+    return await AccessResolver(session).for_org(user, org_id)
+
+
+OrgAccessDep = Annotated[OrgAccess, Depends(get_org_access)]
