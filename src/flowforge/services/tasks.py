@@ -18,6 +18,7 @@ from flowforge.repositories.pagination import Page
 from flowforge.repositories.tasks import TaskFilter, TaskRepository
 from flowforge.security.permissions import Action
 from flowforge.services.access import OrgAccess, requires
+from flowforge.services.cache import ProjectStatsCache
 from flowforge.services.projects import ProjectService
 
 
@@ -56,9 +57,15 @@ def to_domain(row: TaskRow) -> Task:
 
 
 class TaskService:
-    def __init__(self, session: AsyncSession, queue: JobQueue | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        queue: JobQueue | None = None,
+        cache: ProjectStatsCache | None = None,
+    ) -> None:
         self._session = session
         self._queue = queue
+        self._cache = cache or ProjectStatsCache(None, ttl_seconds=1)
         self._tasks = TaskRepository(session)
         self._projects = ProjectService(session)
         self._audit = AuditRepository(session)
@@ -73,14 +80,14 @@ class TaskService:
         row = await self._tasks.get(task_id)
         if row is None:
             raise NotFoundError("task", task_id)
-        project = await self._projects.get(access, row.project_id)
+        project = await self._projects.load_in_org(access.org_id, row.project_id)
         if project.org_id != access.org_id:
             raise NotFoundError("task", task_id)
         return row
 
     @requires(Action.TASK_CREATE)
     async def create(self, access: OrgAccess, project_id: uuid.UUID, data: TaskCreate) -> TaskRow:
-        project = await self._projects.get(access, project_id)
+        project = await self._projects.load_in_org(access.org_id, project_id)
         await self._check_assignee(project.org_id, data.assignee_id)
         # Validate through the domain model so rules live in exactly one place.
         task = Task(
@@ -113,6 +120,7 @@ class TaskService:
             after=snapshot(row),
         )
         await self._session.commit()
+        await self._cache.invalidate(row.project_id)
         await self._publish(
             access.org_id,
             TriggerType.TASK_CREATED,
@@ -151,7 +159,7 @@ class TaskService:
         limit: int,
         cursor: str | None,
     ) -> Page[TaskRow]:
-        await self._projects.get(access, flt.project_id)
+        await self._projects.load_in_org(access.org_id, flt.project_id)
         return await self._tasks.list(flt, sort=sort, limit=limit, cursor=cursor)
 
     @requires(Action.TASK_UPDATE)
@@ -195,6 +203,7 @@ class TaskService:
             after=snapshot(updated),
         )
         await self._session.commit()
+        await self._cache.invalidate(updated.project_id)
         if updated.status != before_status:
             await self._publish(
                 access.org_id,
@@ -222,6 +231,7 @@ class TaskService:
             before=before,
         )
         await self._session.commit()
+        await self._cache.invalidate(row.project_id)
 
 
 def snapshot(row: TaskRow) -> dict[str, Any]:

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flowforge.db.models import Project
+from flowforge.db.models import Project, TaskRow
+from flowforge.domain.task import TaskStatus
 
 
 class ProjectRepository:
@@ -27,3 +28,11 @@ class ProjectRepository:
             .order_by(Project.created_at, Project.id)
         )
         return list(rows)
+
+    async def task_counts(self, project_id: uuid.UUID) -> dict[TaskStatus, int]:
+        rows = await self._session.execute(
+            select(TaskRow.status, func.count())
+            .where(TaskRow.project_id == project_id)
+            .group_by(TaskRow.status)
+        )
+        return {status: count for status, count in rows}
