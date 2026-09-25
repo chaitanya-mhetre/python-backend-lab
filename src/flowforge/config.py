@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("dev-only-secret-change-me-please-32b")
     jwt_ttl_minutes: int = Field(default=15, ge=1, le=60 * 24)
     jwt_algorithm: str = "HS256"
+    refresh_ttl_days: int = Field(default=14, ge=1, le=90)
     sql_echo: bool = False
     # Token bucket: burst of `capacity` requests, refilled at `refill_per_sec`.
     rate_limit_capacity: int = Field(default=60, ge=1)

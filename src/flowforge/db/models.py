@@ -49,6 +49,30 @@ class User(UUIDPk, CreatedAt, Base):
     full_name: Mapped[str] = mapped_column(String(200))
 
 
+class RefreshToken(UUIDPk, CreatedAt, Base):
+    """One row per issued refresh token. Rows are never reused: every refresh rotates.
+
+    All tokens descended from one login share a ``family_id``. Presenting a token that was
+    already used means someone replayed it, so the whole family is revoked.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index("ix_refresh_tokens_family", "family_id"),
+        Index("ix_refresh_tokens_user", "user_id"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    family_id: Mapped[uuid.UUID]
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("refresh_tokens.id", ondelete="SET NULL")
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 hex, never the token
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Organization(UUIDPk, CreatedAt, Base):
     __tablename__ = "organizations"
 

@@ -3,6 +3,7 @@
 ```mermaid
 erDiagram
     users ||--o{ memberships : has
+    users ||--o{ refresh_tokens : "logs in with"
     organizations ||--o{ memberships : has
     organizations ||--o{ projects : owns
     projects ||--o{ tasks : contains
