@@ -18,5 +18,7 @@ down:
 	$(COMPOSE) down
 migrate:
 	uv run alembic upgrade head
+worker:
+	uv run arq flowforge.worker.settings.WorkerSettings
 run:
 	uv run uvicorn flowforge.main:app --reload

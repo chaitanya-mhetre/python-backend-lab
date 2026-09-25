@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import command
 from flowforge.api.app import create_app
 from flowforge.config import Settings, get_settings
+from flowforge.jobs.queue import RecordingJobQueue
+from flowforge.worker.runner import WorkerDeps, dispatch_event, run_execution
 
 TEST_DB_URL = os.environ.get(
     "FLOWFORGE_TEST_DATABASE_URL",
@@ -61,8 +63,13 @@ def settings(migrated_db: str) -> Settings:
 
 
 @pytest.fixture
-async def app(settings: Settings) -> AsyncIterator[FastAPI]:
-    application = create_app(settings, pooled=False)
+def queue() -> RecordingJobQueue:
+    return RecordingJobQueue()
+
+
+@pytest.fixture
+async def app(settings: Settings, queue: RecordingJobQueue) -> AsyncIterator[FastAPI]:
+    application = create_app(settings, pooled=False, queue=queue)
     async with application.router.lifespan_context(application):
         yield application
     await _truncate_all(settings.database_url)
@@ -116,3 +123,41 @@ async def post_json(client: AsyncClient, url: str, headers: Headers, body: Any) 
     r = await client.post(url, json=body, headers=headers)
     assert r.status_code in (200, 201), r.text
     return r.json()
+
+
+@pytest.fixture
+def worker_deps(app: FastAPI, queue: RecordingJobQueue) -> WorkerDeps:
+    return WorkerDeps(
+        sessionmaker=app.state.sessionmaker,
+        queue=queue,
+        backoff_base=1.0,
+        backoff_jitter=False,
+        step_timeout=5.0,
+    )
+
+
+JOB_FUNCTIONS: dict[str, Callable[..., Awaitable[Any]]] = {
+    "dispatch_event": dispatch_event,
+    "run_execution": run_execution,
+}
+
+
+async def drain(
+    deps: WorkerDeps, queue: RecordingJobQueue, *, run_deferred: bool = True, max_jobs: int = 200
+) -> int:
+    """Run queued jobs like a worker would, until the queue is empty. Returns jobs run.
+
+    With ``run_deferred=False`` jobs scheduled for later (retries, delays) are left queued.
+    """
+    ctx: dict[str, Any] = {"deps": deps}
+    ran = 0
+    deferred = []
+    while (job := queue.pop()) is not None:
+        if job.defer_by and not run_deferred:
+            deferred.append(job)
+            continue
+        await JOB_FUNCTIONS[job.function](ctx, *job.args)
+        ran += 1
+        assert ran < max_jobs, "runaway job loop"
+    queue.jobs.extend(deferred)
+    return ran
