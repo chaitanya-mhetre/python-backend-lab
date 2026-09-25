@@ -17,6 +17,7 @@ from flowforge.db.models import (
     WorkflowStepRow,
 )
 from flowforge.domain.errors import ConflictError, DomainError, NotFoundError
+from flowforge.domain.schedule import InvalidScheduleError, validate_cron
 from flowforge.domain.workflow import ExecutionStatus, StepType, TriggerType
 from flowforge.repositories.audit import AuditRepository
 from flowforge.repositories.workflows import ExecutionRepository, WorkflowRepository
@@ -91,6 +92,27 @@ class WorkflowSpec:
     steps: list[StepSpec]
 
 
+# Steps that need a triggering *task* in the event payload. A cron run has no task.
+_TASK_CONTEXT_STEPS = frozenset({StepType.UPDATE_FIELD})
+_TASK_RECIPIENTS = frozenset({"assignee", "creator"})
+
+
+def _validate_trigger(spec: WorkflowSpec) -> dict[str, Any]:
+    """Return the normalised trigger filter; reject schedules that could never run."""
+    if spec.trigger_type is not TriggerType.SCHEDULE_CRON:
+        return spec.trigger_filter
+    if set(spec.trigger_filter) != {"cron"} or not isinstance(spec.trigger_filter["cron"], str):
+        raise InvalidScheduleError('schedule.cron needs trigger_filter {"cron": "<expression>"}')
+    for step in spec.steps:
+        if step.type in _TASK_CONTEXT_STEPS:
+            raise InvalidScheduleError(f"{step.type.value} needs a triggering task")
+        if step.type is StepType.CREATE_TASK and not step.config.get("project_id"):
+            raise InvalidScheduleError("create_task in a scheduled workflow needs project_id")
+        if step.type is StepType.SEND_NOTIFICATION and step.config.get("to") in _TASK_RECIPIENTS:
+            raise InvalidScheduleError("scheduled notifications need an explicit user id")
+    return {"cron": validate_cron(spec.trigger_filter["cron"])}
+
+
 def _build_steps(spec: WorkflowSpec) -> list[WorkflowStepRow]:
     if not spec.steps:
         raise InvalidStepConfigError("a workflow needs at least one step")
@@ -119,7 +141,7 @@ class WorkflowService:
             org_id=access.org_id,
             name=spec.name,
             trigger_type=spec.trigger_type,
-            trigger_filter=spec.trigger_filter,
+            trigger_filter=_validate_trigger(spec),
             enabled=True,
             version=1,
             created_by=access.user_id,
@@ -151,7 +173,7 @@ class WorkflowService:
         row = await self._load(access, definition_id)
         row.name = spec.name
         row.trigger_type = spec.trigger_type
-        row.trigger_filter = spec.trigger_filter
+        row.trigger_filter = _validate_trigger(spec)
         new_steps = _build_steps(spec)
         # Delete old steps first: the unit of work would otherwise INSERT new rows before
         # DELETEing old ones and trip the (definition_id, position) unique constraint.

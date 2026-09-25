@@ -54,6 +54,16 @@ class WorkflowRepository:
         )
         return list(rows)
 
+    async def enabled_scheduled(self) -> list[WorkflowDefinitionRow]:
+        """Every enabled cron workflow, across all orgs (the scheduler is org-agnostic)."""
+        rows = await self._session.scalars(
+            select(WorkflowDefinitionRow).where(
+                WorkflowDefinitionRow.trigger_type == TriggerType.SCHEDULE_CRON,
+                WorkflowDefinitionRow.enabled.is_(True),
+            )
+        )
+        return list(rows)
+
 
 class ExecutionRepository:
     def __init__(self, session: AsyncSession) -> None:
