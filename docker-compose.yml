@@ -1,3 +1,10 @@
+# `make up`      -> only Postgres + Redis (for running the app/tests on your machine)
+# `make up-all`  -> everything, including the API, worker and a one-shot migration job
+x-app-env: &app-env
+  FLOWFORGE_DATABASE_URL: postgresql+asyncpg://flowforge:flowforge@postgres:5432/flowforge
+  FLOWFORGE_REDIS_URL: redis://redis:6379/0
+  FLOWFORGE_JWT_SECRET: ${FLOWFORGE_JWT_SECRET:-dev-only-secret-change-me-please-32b}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -25,6 +32,45 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  migrate:
+    profiles: ["app"]
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: ["app"]
+    build: .
+    environment: *app-env
+    ports:
+      - "${FLOWFORGE_API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: ["app"]
+    build: .
+    command: ["arq", "flowforge.worker.settings.WorkerSettings"]
+    environment: *app-env
+    healthcheck:  # the image's default check probes the API port; the worker serves metrics
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/metrics')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    ports:
+      - "${FLOWFORGE_WORKER_METRICS_PORT:-9101}:9101"  # worker Prometheus metrics
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:
