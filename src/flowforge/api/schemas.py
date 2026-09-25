@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from flowforge.db.models import Role
 from flowforge.domain.task import TaskStatus
 from flowforge.domain.workflow import ExecutionStatus, StepType, TriggerType
+from flowforge.security.permissions import Action
 
 
 class Schema(BaseModel):
@@ -64,6 +65,35 @@ class ProjectOut(Schema):
     org_id: uuid.UUID
     name: str
     created_at: datetime
+
+
+class ProjectPatch(Schema):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    archived: bool | None = None
+
+
+class ProjectDetailOut(ProjectOut):
+    archived: bool
+    task_counts: dict[str, int]
+
+
+class ApiKeyIn(Schema):
+    name: str = Field(min_length=1, max_length=100)
+    scopes: list[Action] = Field(min_length=1)
+
+
+class ApiKeyOut(Schema):
+    id: uuid.UUID
+    name: str
+    prefix: str
+    scopes: list[str]
+    created_at: datetime
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+
+
+class ApiKeyCreatedOut(ApiKeyOut):
+    key: str = Field(description="The full key. Shown only once: store it now.")
 
 
 class TaskIn(Schema):

@@ -21,7 +21,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import CITEXT, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, CITEXT, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from flowforge.db.base import Base, CreatedAt, UUIDPk
@@ -230,3 +230,16 @@ class Notification(UUIDPk, CreatedAt, Base):
     kind: Mapped[str] = mapped_column(String(50))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ApiKey(UUIDPk, CreatedAt, Base):
+    __tablename__ = "api_keys"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(100))
+    prefix: Mapped[str] = mapped_column(String(8), unique=True)  # public part, used for lookup
+    key_hash: Mapped[str] = mapped_column(String(64))  # sha256 hex of the full key
+    scopes: Mapped[list[str]] = mapped_column(ARRAY(String(50)))
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

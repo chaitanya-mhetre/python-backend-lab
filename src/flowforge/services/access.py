@@ -23,13 +23,13 @@ from flowforge.db.models import (
     Project,
     Role,
     TaskRow,
-    User,
     WorkflowDefinitionRow,
     WorkflowExecutionRow,
 )
 from flowforge.domain.errors import NotFoundError, PermissionDeniedError
 from flowforge.repositories.orgs import OrgRepository
 from flowforge.security.permissions import Action, can
+from flowforge.security.principal import Principal
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,8 +37,14 @@ class OrgAccess:
     user_id: uuid.UUID
     org_id: uuid.UUID
     role: Role
+    # API keys are limited to explicit scopes instead of a role's full permission set.
+    scopes: frozenset[Action] | None = None
 
     def require(self, action: Action) -> None:
+        if self.scopes is not None:
+            if action not in self.scopes:
+                raise PermissionDeniedError(f"API key lacks scope {action.value}")
+            return
         if not can(self.role, action):
             raise PermissionDeniedError(f"role {self.role.value!r} may not perform {action.value}")
 
@@ -67,44 +73,51 @@ class AccessResolver:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def for_org(self, user: User, org_id: uuid.UUID) -> OrgAccess:
-        membership = await OrgRepository(self._session).get_membership(org_id, user.id)
+    async def for_org(self, principal: Principal, org_id: uuid.UUID) -> OrgAccess:
+        key = principal.api_key
+        if key is not None:
+            if key.org_id != org_id:  # a key only ever sees its own org
+                raise NotFoundError("organization", org_id)
+            scopes = frozenset(Action(s) for s in key.scopes)
+            return OrgAccess(key.created_by, org_id, Role.VIEWER, scopes=scopes)
+        assert principal.user is not None
+        membership = await OrgRepository(self._session).get_membership(org_id, principal.user.id)
         if membership is None:
             raise NotFoundError("organization", org_id)
-        return OrgAccess(user_id=user.id, org_id=org_id, role=membership.role)
+        return OrgAccess(user_id=principal.user.id, org_id=org_id, role=membership.role)
 
-    async def for_project(self, user: User, project_id: uuid.UUID) -> OrgAccess:
+    async def for_project(self, principal: Principal, project_id: uuid.UUID) -> OrgAccess:
         project = await self._session.get(Project, project_id)
         if project is None:
             raise NotFoundError("project", project_id)
         try:
-            return await self.for_org(user, project.org_id)
+            return await self.for_org(principal, project.org_id)
         except NotFoundError:
             raise NotFoundError("project", project_id) from None
 
-    async def for_task(self, user: User, task_id: uuid.UUID) -> OrgAccess:
+    async def for_task(self, principal: Principal, task_id: uuid.UUID) -> OrgAccess:
         task = await self._session.get(TaskRow, task_id)
         if task is None:
             raise NotFoundError("task", task_id)
         try:
-            return await self.for_project(user, task.project_id)
+            return await self.for_project(principal, task.project_id)
         except NotFoundError:
             raise NotFoundError("task", task_id) from None
 
-    async def for_workflow(self, user: User, definition_id: uuid.UUID) -> OrgAccess:
+    async def for_workflow(self, principal: Principal, definition_id: uuid.UUID) -> OrgAccess:
         row = await self._session.get(WorkflowDefinitionRow, definition_id)
         if row is None:
             raise NotFoundError("workflow", definition_id)
         try:
-            return await self.for_org(user, row.org_id)
+            return await self.for_org(principal, row.org_id)
         except NotFoundError:
             raise NotFoundError("workflow", definition_id) from None
 
-    async def for_execution(self, user: User, execution_id: uuid.UUID) -> OrgAccess:
+    async def for_execution(self, principal: Principal, execution_id: uuid.UUID) -> OrgAccess:
         row = await self._session.get(WorkflowExecutionRow, execution_id)
         if row is None:
             raise NotFoundError("execution", execution_id)
         try:
-            return await self.for_org(user, row.org_id)
+            return await self.for_org(principal, row.org_id)
         except NotFoundError:
             raise NotFoundError("execution", execution_id) from None
