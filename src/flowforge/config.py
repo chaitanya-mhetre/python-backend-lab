@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     rate_limit_capacity: int = Field(default=60, ge=1)
     rate_limit_refill_per_sec: float = Field(default=1.0, gt=0)
     cache_ttl_seconds: int = Field(default=60, ge=1)
+    # Fernet key that encrypts webhook signing secrets at rest. Dev default only!
+    secret_encryption_key: SecretStr = SecretStr("HJjtDt5BGKz2BlyOyjuIkp6bA6TYT9sGhqIGU6VKJKQ=")
+    # Only for local development against e.g. http://localhost receivers.
+    webhook_allow_private_targets: bool = False
+    max_request_body_bytes: int = 1_000_000
 
 
 @lru_cache
