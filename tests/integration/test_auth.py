@@ -63,3 +63,10 @@ async def test_short_password_rejected_with_error_format(client: AsyncClient) ->
 async def test_health_endpoints(client: AsyncClient) -> None:
     assert (await client.get("/healthz")).json() == {"status": "ok"}
     assert (await client.get("/readyz")).status_code == 200
+
+
+async def test_metrics_endpoint_exposes_prometheus_text(client: AsyncClient) -> None:
+    await client.get("/api/v1/me")
+    r = await client.get("/metrics")
+    assert r.status_code == 200
+    assert "http_requests_total" in r.text or "http_request_duration" in r.text

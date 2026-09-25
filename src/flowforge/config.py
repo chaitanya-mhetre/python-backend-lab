@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Only for local development against e.g. http://localhost receivers.
     webhook_allow_private_targets: bool = False
     max_request_body_bytes: int = 1_000_000
+    log_level: str = "INFO"
+    log_json: bool = True
+    worker_metrics_port: int = 9101
 
 
 @lru_cache

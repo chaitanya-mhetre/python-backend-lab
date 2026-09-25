@@ -1,6 +1,6 @@
 [project]
 name = "flowforge"
-version = "0.1.0"
+version = "1.0.0"
 description = "Workflow automation backend — learning lab"
 readme = "README.md"
 authors = [
@@ -15,9 +15,13 @@ dependencies = [
     "cryptography>=50.0.1",
     "email-validator>=2.3.0",
     "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "prometheus-client>=0.26.0",
+    "prometheus-fastapi-instrumentator>=8.1.0",
     "pydantic-settings>=2.15.0",
     "pyjwt>=2.15.0",
     "sqlalchemy[asyncio]>=2.1.0",
+    "structlog>=26.1.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -27,7 +31,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -40,12 +43,15 @@ line-length = 100
 target-version = "py312"
 extend-exclude = ["alembic/versions"]
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E501"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "N"]
 
 [tool.mypy]
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

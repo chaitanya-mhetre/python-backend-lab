@@ -10,8 +10,10 @@ from typing import cast
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from fastapi import FastAPI, Request, Response
+from prometheus_fastapi_instrumentator import Instrumentator
 from redis.asyncio import Redis
 
+from flowforge import __version__
 from flowforge.api.body_limit import install_body_limit
 from flowforge.api.errors import install_error_handlers
 from flowforge.api.rate_limit import install_rate_limit
@@ -78,7 +80,15 @@ def create_app(
             await arq_redis.aclose()
         await engine.dispose()
 
-    app = FastAPI(title="Flowforge", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Flowforge",
+        version=__version__,
+        description="Workflow automation backend: orgs, projects, tasks, workflows, webhooks.",
+        lifespan=lifespan,
+    )
+    Instrumentator(excluded_handlers=["/metrics", "/healthz", "/readyz"]).instrument(app).expose(
+        app, include_in_schema=False
+    )
     app.state.settings = settings
     app.state.secret_box = SecretBox(settings.secret_encryption_key.get_secret_value())
     app.state.resolver = resolver

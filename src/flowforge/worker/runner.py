@@ -27,8 +27,8 @@ this with a transactional outbox.
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
+import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -52,12 +53,13 @@ from flowforge.domain.workflow import (
     event_to_dict,
 )
 from flowforge.jobs.queue import JobQueue
+from flowforge.observability.metrics import STEP_DURATION, WORKFLOW_EXECUTIONS
 from flowforge.repositories.workflows import ExecutionRepository, WorkflowRepository, to_domain
 from flowforge.security.webhooks import Resolver, SecretBox, system_resolver
 from flowforge.worker.deliveries import create_deliveries
 from flowforge.worker.steps import DEFAULT_HANDLERS, AsyncStepHandler, StepInput, StepResult
 
-log = logging.getLogger("flowforge.worker")
+log = structlog.get_logger("flowforge.worker")
 
 TERMINAL = frozenset({ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED})
 
@@ -208,6 +210,7 @@ async def _run_next_step(deps: WorkerDeps, execution_id: uuid.UUID) -> _StepOutc
         pending = [s for s in execution.steps_snapshot if s["position"] not in succeeded]
         if not pending:
             execution.status, execution.finished_at = ExecutionStatus.SUCCEEDED, now
+            WORKFLOW_EXECUTIONS.labels("succeeded").inc()
             return _StepOutcome(done=True)
 
         step = pending[0]
@@ -223,12 +226,15 @@ async def _run_next_step(deps: WorkerDeps, execution_id: uuid.UUID) -> _StepOutc
             config=step["config"],
         )
 
+        started = time.perf_counter()
         try:
             result = await _call_handler(deps, session, step_type, step_input)
         except Exception as exc:  # noqa: BLE001 - every handler failure is recorded
+            STEP_DURATION.labels(step_type.value, "failed").observe(time.perf_counter() - started)
             return await _record_failure(
                 deps, session, execution, position, step_type, attempt, exc
             )
+        STEP_DURATION.labels(step_type.value, "succeeded").observe(time.perf_counter() - started)
 
         session.add(
             StepRunRow(
@@ -288,13 +294,17 @@ async def _record_failure(
         )
     )
     log.warning(
-        "step failed",
-        extra={"execution_id": str(execution.id), "position": position, "attempt": attempt},
+        "workflow_step_failed",
+        execution_id=str(execution.id),
+        position=position,
+        attempt=attempt,
+        error=message,
     )
     if attempt >= deps.max_attempts:
         execution.status, execution.finished_at = ExecutionStatus.FAILED, now
         execution.error = f"step {position} failed after {attempt} attempts: {message}"
         execution.error_code = exc.code if isinstance(exc, DomainError) else "step_error"
+        WORKFLOW_EXECUTIONS.labels("failed").inc()
         return _StepOutcome(done=True)
     await deps.queue.enqueue(
         "run_execution",

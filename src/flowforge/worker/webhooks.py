@@ -15,6 +15,7 @@ import httpx
 
 from flowforge.db.models import DeliveryStatus, Webhook, WebhookDelivery
 from flowforge.db.session import session_scope
+from flowforge.observability.metrics import WEBHOOK_DELIVERIES
 from flowforge.security.webhooks import UnsafeWebhookURLError, check_url, sign
 from flowforge.worker.runner import WorkerDeps
 
@@ -75,6 +76,7 @@ async def deliver_webhook(ctx: dict[str, Any], delivery_id: str) -> str:
         except httpx.HTTPError as exc:
             error = f"{type(exc).__name__}: {exc}"
 
+        WEBHOOK_DELIVERIES.labels("success" if error is None else "failure").inc()
         if error is None:
             delivery.status, delivery.delivered_at = DeliveryStatus.SUCCEEDED, now
             delivery.last_error = delivery.next_retry_at = None
