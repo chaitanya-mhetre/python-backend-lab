@@ -43,8 +43,8 @@ decisions: [docs/adr/](docs/adr/)
   `create_task`, `update_field`, `send_notification`, `call_webhook`, `delay`
 - **Worker:** one transaction per step, retries with exponential backoff + jitter, step timeouts,
   cancellation, per-org concurrency limit, loop protection (depth ≤ 5), version pinning
-- **Webhooks:** HMAC-SHA256 + timestamp signatures, encrypted secrets, SSRF guard, retry schedule
-  1m/5m/30m/2h/12h, delivery log, redelivery
+- **Webhooks:** HMAC-SHA256 + timestamp signatures, encrypted secrets, SSRF guard with IP pinning
+  (no DNS rebinding), retry schedule 1m/5m/30m/2h/12h, delivery log, redelivery
 - **Audit log** for every change, written in the same transaction; **notifications** with unread state
 - **Redis:** atomic Lua token-bucket rate limiter (429 + `Retry-After`), cache-aside project stats
 - **Ops:** JSON logs with request id, Prometheus metrics (API `/metrics`, worker `:9101`),
@@ -94,8 +94,7 @@ Local via Docker Compose (`make up-all`: migrate job → api + worker). The imag
 and runs as a non-root user. Cloud deployment is done in a separate project (`cloud-infra-lab`).
 
 ## Security
-Summary in [docs/security.md](docs/security.md), including known limits (e.g. DNS rebinding for
-webhooks).
+Summary in [docs/security.md](docs/security.md), including known limits.
 
 ## Performance
 Measured, not estimated. Task list (first + second page, 50 rows) on 100,000 tasks, local Docker Postgres:
@@ -120,13 +119,11 @@ Cache hit ratio and worker throughput: **not measured yet**.
 ## Limitations
 - Cron schedules are UTC only (no per-workflow time zone); missed runs older than 5 min are skipped, not replayed.
 - No 2FA or account lockout.
-- Webhook SSRF guard doesn't pin the resolved IP (DNS rebinding window).
 - Worker-created tasks don't invalidate the stats cache (TTL, 60 s by default).
 - Single-region, single-database design.
 
 ## Roadmap
-- webhook IP pinning 
-· outbox pattern · OpenTelemetry traces
+- outbox pattern · OpenTelemetry traces · per-workflow time zones for cron
 
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).

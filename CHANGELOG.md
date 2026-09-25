@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com). Milestone tags: `m1` …
   unique index on `(definition_id, scheduled_for)` guarantees one execution per scheduled time.
   Cron expressions are validated when saved (#2).
 
+### Security
+- Webhook delivery now connects to the IP address that passed the SSRF check instead of letting
+  the HTTP client resolve the hostname again, closing the DNS-rebinding window (#3).
+
 ## [1.0.0] - 2026-09-25 (m7)
 ### Added
 - Structured JSON logging (structlog) with request id and actor on every line.

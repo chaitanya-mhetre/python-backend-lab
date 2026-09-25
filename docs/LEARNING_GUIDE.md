@@ -420,3 +420,31 @@ Interview questions:
 - *The scheduler was down for two hours. What happens?* Nothing replays; the next tick fires the
   latest due slot if it's within the lookback. Explain why that's the right default and when you'd
   choose "catch up everything" instead (e.g. billing runs).
+
+### 10.3 Closing the DNS-rebinding gap (#3)
+Read in this order: `security/webhooks.py` (`check_url` → `PinnedDNSBackend` → `PinnedTransport`)
+→ `worker/webhooks.py` → `tests/unit/test_dns_pinning.py`.
+
+- **The attack.** SSRF guards usually "resolve the host, check the IP, then make the request". But
+  the HTTP client resolves the name *again*. An attacker-controlled DNS server with a 0-second TTL
+  answers the check with a public IP and the real connection with `10.0.0.5` or `169.254.169.254`.
+  This is time-of-check vs time-of-use (TOCTOU), applied to DNS.
+- **The fix: one answer, used twice.** `check_url` now returns the IPs it vetted, and delivery
+  connects to that exact IP. httpx has no "connect to this IP" option, so we plug in at the httpcore
+  layer: a custom `AsyncNetworkBackend` whose `connect_tcp(host, …)` swaps the hostname for the
+  pinned IP.
+- **TLS still checks the right name.** httpcore passes the original hostname to `start_tls`, so SNI
+  and certificate verification use `hooks.example.com`, not the IP
+  (`test_tls_still_verifies_the_hostname_not_the_ip`).
+- **Close the side doors.** Hosts without a pin (e.g. a redirect to another domain) are refused,
+  unix sockets are refused, and `trust_env=False` stops an `HTTPS_PROXY` variable from routing
+  requests around the pinned transport.
+
+Interview questions:
+- *What is DNS rebinding and why doesn't "check the IP first" stop it?* Explain the two lookups and
+  the TOCTOU window; the fix is to connect to the checked address, or send all egress through a
+  proxy that enforces the allow-list itself.
+- *If you connect to an IP, how does HTTPS know which certificate to expect?* The TLS client sends
+  the hostname via SNI and verifies the certificate against the hostname, not the socket address.
+- *What else would you add for defence in depth?* An egress proxy or firewall that blocks private
+  ranges at the network level, and a separate network for the worker that sends webhooks.
