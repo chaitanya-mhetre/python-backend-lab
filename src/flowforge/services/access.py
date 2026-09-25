@@ -23,6 +23,7 @@ from flowforge.db.models import (
     Project,
     Role,
     TaskRow,
+    Webhook,
     WorkflowDefinitionRow,
     WorkflowExecutionRow,
 )
@@ -121,3 +122,12 @@ class AccessResolver:
             return await self.for_org(principal, row.org_id)
         except NotFoundError:
             raise NotFoundError("execution", execution_id) from None
+
+    async def for_webhook(self, principal: Principal, webhook_id: uuid.UUID) -> OrgAccess:
+        row = await self._session.get(Webhook, webhook_id)
+        if row is None:
+            raise NotFoundError("webhook", webhook_id)
+        try:
+            return await self.for_org(principal, row.org_id)
+        except NotFoundError:
+            raise NotFoundError("webhook", webhook_id) from None

@@ -26,6 +26,7 @@ from flowforge.security.tokens import decode_access_token
 from flowforge.services.access import AccessResolver, OrgAccess
 from flowforge.services.api_keys import ApiKeyService
 from flowforge.services.cache import ProjectStatsCache
+from flowforge.services.webhooks import WebhookService
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -100,3 +101,17 @@ async def get_org_access(
 
 
 OrgAccessDep = Annotated[OrgAccess, Depends(get_org_access)]
+
+
+def get_webhook_service(request: Request, session: SessionDep) -> WebhookService:
+    settings: Settings = request.app.state.settings
+    return WebhookService(
+        session,
+        secret_box=request.app.state.secret_box,
+        resolver=request.app.state.resolver,
+        allow_private=settings.webhook_allow_private_targets,
+        queue=request.app.state.queue,
+    )
+
+
+WebhookServiceDep = Annotated[WebhookService, Depends(get_webhook_service)]

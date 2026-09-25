@@ -12,14 +12,26 @@ from arq.connections import ArqRedis, RedisSettings
 from fastapi import FastAPI, Request, Response
 from redis.asyncio import Redis
 
+from flowforge.api.body_limit import install_body_limit
 from flowforge.api.errors import install_error_handlers
 from flowforge.api.rate_limit import install_rate_limit
-from flowforge.api.routers import api_keys, auth, health, orgs, projects, tasks, workflows
+from flowforge.api.routers import (
+    api_keys,
+    auth,
+    health,
+    notifications,
+    orgs,
+    projects,
+    tasks,
+    webhooks,
+    workflows,
+)
 from flowforge.config import Settings, get_settings
 from flowforge.context import request_id_var
 from flowforge.db.session import make_engine, make_sessionmaker
 from flowforge.jobs.queue import ArqJobQueue, JobQueue
 from flowforge.security.rate_limit import TokenBucketLimiter
+from flowforge.security.webhooks import Resolver, SecretBox, system_resolver
 
 _USE_SETTINGS = object()
 
@@ -30,6 +42,7 @@ def create_app(
     pooled: bool = True,
     queue: JobQueue | None = None,
     redis: Redis | None | object = _USE_SETTINGS,
+    resolver: Resolver = system_resolver,
 ) -> FastAPI:
     """``redis``: omit to connect using settings; pass a client (tests) or ``None`` to disable
     caching and rate limiting."""
@@ -67,6 +80,8 @@ def create_app(
 
     app = FastAPI(title="Flowforge", version="0.2.0", lifespan=lifespan)
     app.state.settings = settings
+    app.state.secret_box = SecretBox(settings.secret_encryption_key.get_secret_value())
+    app.state.resolver = resolver
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -82,8 +97,9 @@ def create_app(
         return response
 
     install_error_handlers(app)
+    install_body_limit(app, settings.max_request_body_bytes)
     install_rate_limit(app)  # added last = runs first (outermost), before auth
     app.include_router(health.router)
-    for module in (auth, orgs, projects, tasks, workflows, api_keys):
+    for module in (auth, orgs, projects, tasks, workflows, api_keys, webhooks, notifications):
         app.include_router(module.router, prefix="/api/v1")
     return app

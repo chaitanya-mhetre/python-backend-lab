@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flowforge.db.models import TaskRow
+from flowforge.db.models import Notification, TaskRow
 from flowforge.domain.errors import ConflictError, NotFoundError
 from flowforge.domain.task import Task, TaskStatus
 from flowforge.domain.workflow import Event, TriggerType, event_to_dict
@@ -112,6 +112,8 @@ class TaskService:
                 version=0,
             )
         )
+        if row.assignee_id is not None and row.assignee_id != access.user_id:
+            self._notify_assigned(access, row, row.assignee_id)
         self._audit.record(
             org_id=access.org_id,
             action="task.created",
@@ -144,6 +146,17 @@ class TaskService:
         if self._queue is not None:
             event = Event(type=type_, org_id=org_id, payload=payload)
             await self._queue.enqueue("dispatch_event", event_to_dict(event))
+
+    def _notify_assigned(self, access: OrgAccess, row: TaskRow, assignee_id: uuid.UUID) -> None:
+        # Same transaction as the change: no notification for a rolled-back assignment.
+        self._session.add(
+            Notification(
+                user_id=assignee_id,
+                org_id=access.org_id,
+                kind="task_assigned",
+                payload={"task_id": str(row.id), "title": row.title},
+            )
+        )
 
     @requires(Action.TASK_READ)
     async def get(self, access: OrgAccess, task_id: uuid.UUID) -> TaskRow:
@@ -194,6 +207,9 @@ class TaskService:
         updated = await self._tasks.update_if_version(task_id, version, values)
         if updated is None:
             raise VersionConflictError("task was modified by someone else; reload and retry")
+        new_assignee = values.get("assignee_id")
+        if new_assignee is not None and new_assignee != before["assignee_id"]:
+            self._notify_assigned(access, updated, new_assignee)
         self._audit.record(
             org_id=access.org_id,
             action="task.updated",

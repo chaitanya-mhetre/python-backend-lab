@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from flowforge.db.models import Role
+from flowforge.db.models import DeliveryStatus, Role
 from flowforge.domain.task import TaskStatus
 from flowforge.domain.workflow import ExecutionStatus, StepType, TriggerType
 from flowforge.security.permissions import Action
@@ -213,6 +213,45 @@ class ExecutionOut(Schema):
 
 class ExecutionDetailOut(ExecutionOut):
     step_runs: list[StepRunOut]
+
+
+class WebhookIn(Schema):
+    url: str = Field(min_length=8, max_length=2000)
+    events: list[Literal["task.created", "task.status_changed"]] = Field(min_length=1)
+
+
+class WebhookOut(Schema):
+    id: uuid.UUID
+    url: str
+    events: list[str]
+    active: bool
+    created_at: datetime
+
+
+class WebhookCreatedOut(WebhookOut):
+    secret: str = Field(description="Signing secret. Shown only once.")
+
+
+class DeliveryOut(Schema):
+    id: uuid.UUID
+    webhook_id: uuid.UUID
+    event_type: str
+    status: DeliveryStatus
+    attempt: int
+    status_code: int | None
+    last_error: str | None
+    next_retry_at: datetime | None
+    delivered_at: datetime | None
+    created_at: datetime
+
+
+class NotificationOut(Schema):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    kind: str
+    payload: dict[str, Any]
+    read_at: datetime | None
+    created_at: datetime
 
 
 class PageOut[T](BaseModel):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -25,6 +26,8 @@ from flowforge.api.app import create_app
 from flowforge.config import Settings, get_settings
 from flowforge.jobs.queue import RecordingJobQueue
 from flowforge.worker.runner import WorkerDeps, dispatch_event, run_execution
+from flowforge.worker.webhooks import deliver_webhook
+from tests.unit.test_webhook_security import fake_resolver
 
 TEST_DB_URL = os.environ.get(
     "FLOWFORGE_TEST_DATABASE_URL",
@@ -93,7 +96,9 @@ def queue() -> RecordingJobQueue:
 async def app(
     settings: Settings, queue: RecordingJobQueue, cache_redis: Redis | None
 ) -> AsyncIterator[FastAPI]:
-    application = create_app(settings, pooled=False, queue=queue, redis=cache_redis)
+    application = create_app(
+        settings, pooled=False, queue=queue, redis=cache_redis, resolver=fake_resolver
+    )
     async with application.router.lifespan_context(application):
         yield application
     await _truncate_all(settings.database_url)
@@ -149,6 +154,9 @@ async def post_json(client: AsyncClient, url: str, headers: Headers, body: Any) 
     return r.json()
 
 
+FROZEN_NOW = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
+
+
 @pytest.fixture
 def worker_deps(app: FastAPI, queue: RecordingJobQueue) -> WorkerDeps:
     return WorkerDeps(
@@ -157,12 +165,16 @@ def worker_deps(app: FastAPI, queue: RecordingJobQueue) -> WorkerDeps:
         backoff_base=1.0,
         backoff_jitter=False,
         step_timeout=5.0,
+        secret_box=app.state.secret_box,
+        resolver=fake_resolver,
+        clock=lambda: FROZEN_NOW,
     )
 
 
 JOB_FUNCTIONS: dict[str, Callable[..., Awaitable[Any]]] = {
     "dispatch_event": dispatch_event,
     "run_execution": run_execution,
+    "deliver_webhook": deliver_webhook,
 }
 
 
