@@ -31,11 +31,12 @@ import logging
 import random
 import uuid
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -52,6 +53,8 @@ from flowforge.domain.workflow import (
 )
 from flowforge.jobs.queue import JobQueue
 from flowforge.repositories.workflows import ExecutionRepository, WorkflowRepository, to_domain
+from flowforge.security.webhooks import Resolver, SecretBox, system_resolver
+from flowforge.worker.deliveries import create_deliveries
 from flowforge.worker.steps import DEFAULT_HANDLERS, AsyncStepHandler, StepInput, StepResult
 
 log = logging.getLogger("flowforge.worker")
@@ -82,6 +85,12 @@ class WorkerDeps:
     backoff_base: float = 5.0
     backoff_jitter: bool = True
     per_org_concurrency: int = 4
+    # webhook delivery
+    secret_box: SecretBox | None = None
+    resolver: Resolver = system_resolver
+    allow_private_targets: bool = False
+    http_client: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=10.0)
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     _org_limits: defaultdict[uuid.UUID, asyncio.Semaphore] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -133,7 +142,16 @@ async def dispatch_event(ctx: dict[str, Any], event_data: dict[str, Any]) -> lis
                 execution.finished_at = datetime.now(UTC)
             session.add(execution)
             created.append(execution)
+        # Only first-hand events go to webhook subscribers; workflow-caused cascades don't,
+        # so a loop can't flood a customer's endpoint.
+        deliveries = (
+            await create_deliveries(session, event.org_id, event.type.value, dict(event.payload))
+            if event.depth == 0
+            else []
+        )
 
+    for delivery in deliveries:
+        await deps.queue.enqueue("deliver_webhook", str(delivery.id), job_id=f"whd:{delivery.id}:0")
     for execution in created:
         if execution.status is ExecutionStatus.PENDING:
             await deps.queue.enqueue(
@@ -149,6 +167,7 @@ async def dispatch_event(ctx: dict[str, Any], event_data: dict[str, Any]) -> lis
 class _StepOutcome:
     done: bool  # execution reached a terminal state (or nothing left to do in this job)
     events: list[Event] = field(default_factory=list)
+    jobs: list[tuple[str, tuple[Any, ...]]] = field(default_factory=list)
 
 
 async def run_execution(ctx: dict[str, Any], execution_id: str) -> str:
@@ -164,6 +183,8 @@ async def run_execution(ctx: dict[str, Any], execution_id: str) -> str:
         while True:
             outcome = await _run_next_step(deps, exec_uuid)
             await publish_events(deps.queue, outcome.events)  # after commit (see module doc)
+            for function, args in outcome.jobs:
+                await deps.queue.enqueue(function, *args)
             if outcome.done:
                 break
     async with deps.sessionmaker() as session:
@@ -227,8 +248,8 @@ async def _run_next_step(deps: WorkerDeps, execution_id: uuid.UUID) -> _StepOutc
                 job_id=f"exec:{execution_id}:after:{position}",
                 defer_by=result.defer_seconds,
             )
-            return _StepOutcome(done=True, events=result.emitted)
-        return _StepOutcome(done=False, events=result.emitted)
+            return _StepOutcome(done=True, events=result.emitted, jobs=result.after_commit_jobs)
+        return _StepOutcome(done=False, events=result.emitted, jobs=result.after_commit_jobs)
 
 
 async def _call_handler(

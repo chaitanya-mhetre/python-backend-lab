@@ -243,3 +243,36 @@ class ApiKey(UUIDPk, CreatedAt, Base):
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeliveryStatus(StrEnum):
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class Webhook(UUIDPk, CreatedAt, Base):
+    __tablename__ = "webhooks"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    url: Mapped[str] = mapped_column(String(2000))
+    secret_encrypted: Mapped[str] = mapped_column(Text)  # Fernet token, never plaintext
+    events: Mapped[list[str]] = mapped_column(ARRAY(String(50)))
+    active: Mapped[bool] = mapped_column(default=True)
+
+
+class WebhookDelivery(UUIDPk, CreatedAt, Base):
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (Index("ix_webhook_deliveries_webhook_created", "webhook_id", "created_at"),)
+
+    webhook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("webhooks.id", ondelete="CASCADE"))
+    event_type: Mapped[str] = mapped_column(String(50))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[DeliveryStatus] = mapped_column(
+        pg_enum(DeliveryStatus, "delivery_status"), default=DeliveryStatus.PENDING
+    )
+    attempt: Mapped[int] = mapped_column(default=0)
+    status_code: Mapped[int | None]
+    last_error: Mapped[str | None] = mapped_column(Text)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

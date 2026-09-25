@@ -22,6 +22,7 @@ from flowforge.domain.task import Task, TaskStatus
 from flowforge.domain.workflow import Event, StepType, TriggerType
 from flowforge.repositories.audit import AuditRepository
 from flowforge.repositories.tasks import TaskRepository
+from flowforge.worker.deliveries import create_deliveries
 
 
 @dataclass
@@ -38,6 +39,8 @@ class StepResult:
     output: dict[str, Any] = field(default_factory=dict)
     emitted: list[Event] = field(default_factory=list)
     defer_seconds: float | None = None
+    # (function, args) to enqueue once the step's transaction has committed
+    after_commit_jobs: list[tuple[str, tuple[Any, ...]]] = field(default_factory=list)
 
 
 class AsyncStepHandler(Protocol):
@@ -149,7 +152,26 @@ async def delay(step: StepInput) -> StepResult:
     return StepResult(output={"delayed_seconds": seconds}, defer_seconds=seconds)
 
 
+async def call_webhook(step: StepInput) -> StepResult:
+    webhook_id = uuid.UUID(str(step.config["webhook_id"]))
+    deliveries = await create_deliveries(
+        step.session,
+        step.execution.org_id,
+        f"workflow.{step.event.type.value}",
+        {"execution_id": str(step.execution.id), "event": dict(step.event.payload)},
+        webhook_id=webhook_id,
+    )
+    if not deliveries:
+        raise NotFoundError("webhook", webhook_id)  # deleted, inactive or another org's
+    [delivery] = deliveries
+    return StepResult(
+        output={"delivery_id": str(delivery.id)},
+        after_commit_jobs=[("deliver_webhook", (str(delivery.id),))],
+    )
+
+
 DEFAULT_HANDLERS: dict[StepType, AsyncStepHandler] = {
+    StepType.CALL_WEBHOOK: call_webhook,
     StepType.CREATE_TASK: create_task,
     StepType.UPDATE_FIELD: update_field,
     StepType.SEND_NOTIFICATION: send_notification,

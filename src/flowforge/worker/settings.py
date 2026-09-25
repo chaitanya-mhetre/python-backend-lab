@@ -9,7 +9,9 @@ from arq.connections import RedisSettings
 from flowforge.config import get_settings
 from flowforge.db.session import make_engine, make_sessionmaker
 from flowforge.jobs.queue import ArqJobQueue
+from flowforge.security.webhooks import SecretBox
 from flowforge.worker.runner import WorkerDeps, dispatch_event, run_execution
+from flowforge.worker.webhooks import deliver_webhook
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -19,6 +21,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["deps"] = WorkerDeps(
         sessionmaker=make_sessionmaker(engine),
         queue=ArqJobQueue(ctx["redis"]),
+        secret_box=SecretBox(settings.secret_encryption_key.get_secret_value()),
+        allow_private_targets=settings.webhook_allow_private_targets,
     )
 
 
@@ -27,7 +31,7 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions: ClassVar[list[Any]] = [dispatch_event, run_execution]
+    functions: ClassVar[list[Any]] = [dispatch_event, run_execution, deliver_webhook]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
