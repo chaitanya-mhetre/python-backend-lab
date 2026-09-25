@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
     worker_metrics_port: int = 9101
+    # Cron runs older than this are treated as missed and skipped (see domain/schedule.py).
+    schedule_lookback_seconds: int = Field(default=300, ge=60)
 
 
 @lru_cache

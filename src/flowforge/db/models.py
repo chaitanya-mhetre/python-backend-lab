@@ -191,6 +191,15 @@ class WorkflowExecutionRow(UUIDPk, Base):
             "status",
             postgresql_where=text("status IN ('pending', 'running')"),
         ),
+        # Double-fire guard for cron workflows: one execution per (workflow, scheduled time),
+        # no matter how many scheduler instances race to create it.
+        Index(
+            "uq_workflow_executions_schedule",
+            "definition_id",
+            "scheduled_for",
+            unique=True,
+            postgresql_where=text("scheduled_for IS NOT NULL"),
+        ),
     )
 
     definition_id: Mapped[uuid.UUID] = mapped_column(
@@ -201,6 +210,7 @@ class WorkflowExecutionRow(UUIDPk, Base):
     definition_version: Mapped[int]
     steps_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     trigger_event: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[ExecutionStatus] = mapped_column(
         pg_enum(ExecutionStatus, "execution_status"), default=ExecutionStatus.PENDING
     )
