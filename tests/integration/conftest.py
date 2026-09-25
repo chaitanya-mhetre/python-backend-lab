@@ -16,6 +16,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -58,8 +59,29 @@ def migrated_db() -> str:
 @pytest.fixture
 def settings(migrated_db: str) -> Settings:
     return Settings(
-        database_url=migrated_db, jwt_secret=SecretStr("test-secret-that-is-long-enough-32b")
+        database_url=migrated_db,
+        jwt_secret=SecretStr("test-secret-that-is-long-enough-32b"),
+        rate_limit_capacity=100_000,  # effectively off; test_rate_limit.py builds its own app
     )
+
+
+REDIS_TEST_URL = os.environ.get("FLOWFORGE_TEST_REDIS_URL", "redis://localhost:56379/14")
+
+
+@pytest.fixture
+async def cache_redis() -> AsyncIterator[Redis | None]:
+    """Real Redis (DB 14), or None when unavailable: Redis-dependent tests then skip."""
+    client: Redis = Redis.from_url(REDIS_TEST_URL)
+    try:
+        await client.ping()
+    except Exception:  # noqa: BLE001
+        await client.aclose()
+        yield None
+        return
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()
 
 
 @pytest.fixture
@@ -68,8 +90,10 @@ def queue() -> RecordingJobQueue:
 
 
 @pytest.fixture
-async def app(settings: Settings, queue: RecordingJobQueue) -> AsyncIterator[FastAPI]:
-    application = create_app(settings, pooled=False, queue=queue)
+async def app(
+    settings: Settings, queue: RecordingJobQueue, cache_redis: Redis | None
+) -> AsyncIterator[FastAPI]:
+    application = create_app(settings, pooled=False, queue=queue, redis=cache_redis)
     async with application.router.lifespan_context(application):
         yield application
     await _truncate_all(settings.database_url)

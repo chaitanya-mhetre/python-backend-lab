@@ -65,3 +65,18 @@ async def test_requires_decorator_allows_and_denies() -> None:
 def test_service_methods_declare_their_action() -> None:
     assert TaskService.delete.required_action is Action.TASK_DELETE  # type: ignore[attr-defined]
     assert OrgService.add_member.required_action is Action.MEMBER_MANAGE  # type: ignore[attr-defined]
+
+
+async def test_api_key_cannot_exceed_creator_role() -> None:
+    from unittest.mock import MagicMock
+
+    from flowforge.services.api_keys import ApiKeyService
+
+    service = ApiKeyService(MagicMock())
+    # A viewer-role principal holding API_KEY_MANAGE via scopes=None isn't possible through
+    # the API, so test the guard directly with a member who is (hypothetically) allowed to manage.
+    access = OrgAccess(uuid.uuid4(), uuid.uuid4(), Role.MEMBER, scopes=None)
+    with pytest.raises(PermissionDeniedError):
+        await ApiKeyService.create.__wrapped__(  # type: ignore[attr-defined]
+            service, access, "k", [Action.TASK_DELETE]
+        )
